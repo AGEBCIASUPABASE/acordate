@@ -260,16 +260,20 @@ const NUM={un:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,diez:1
 const num=s=>NUM[sinTildes(s)]??+s;
 const DSEM='lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
 function interpretar(txt){
-  let t=' '+txt.trim()+' ';const n=sinTildes(txt);
+  let t=' '+txt.trim()+' ';const todo=sinTildes(txt);
+  // El tipo se decide por el principio de la frase (en un dictado largo, lo de después son explicaciones).
+  const cabeza=todo.split(/\s+/).slice(0,8).join(' ');
   const r={tipo:'otro',horas:[],rep:'una',dias:[],inicio:hoy(),notas:''};
   let fecha=null,franja=null,cadaHoras=0,durante=0;
   const saca=(re,fn)=>{t=t.replace(re,(...m)=>{fn&&fn(m);return ' '})};
+  for(const n of [cabeza,todo]){
   if(/pastilla|medicament|medicina|comprimido|capsula|jarabe|gotas|inyecc|insulina|pildora|antibiotico|ibuprofeno|paracetamol|omeprazol|sintrom|inhalador|vitamina|tomar(me)? (la|el|las|los) /.test(n))r.tipo='med';
   else if(/analisis|analitica|resonancia|ecografia|radiografia|mamografia|colonoscopia|endoscopia|examen medico|prueba medica|chequeo|revision medica|extraccion|electrocardiograma|\btac\b|scanner|densitometria|biopsia|vacuna/.test(n))r.tipo='prueba';
   else if(/cumple/.test(n))r.tipo='cumple';
   else if(/pagar|recibo|factura|hipoteca|alquiler|impuesto|\bitv\b|renovar|cuota/.test(n))r.tipo='pago';
   else if(/reunion|cita|medico|doctor|dentista|consulta|hospital|centro de salud|fisio|quedada|quedar con|entrevista|llamar|videollamada|abogado|gestor/.test(n))r.tipo='cita';
   else if(/comprar|hacer|llevar|recoger|enviar|mandar|revisar|limpiar|tramite/.test(n))r.tipo='tarea';
+  if(r.tipo!=='otro')break}
   saca(R('\\ben ayunas\\b'),()=>{r.prepTexto='Ir en ayunas: no comer ni beber nada (salvo agua si te lo permiten).';r.prepHoras=12});
   saca(R('\\bcada (\\d+|dos|tres|cuatro|seis|ocho|doce) horas\\b'),m=>{cadaHoras=num(m[1]);if(r.rep==='una')r.rep='diaria'});
   saca(R('\\bdurante (\\d+|un|una|dos|tres|cuatro|cinco|seis|siete|diez|quince) (dias?|semanas?|mes(?:es)?)\\b'),m=>{const k=num(m[1]),u=sinTildes(m[2]);durante=u.startsWith('sem')?k*7:u.startsWith('mes')?k*30:k});
@@ -299,6 +303,7 @@ function interpretar(txt){
   saca(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/g,m=>{let a=m[3]?+m[3]:new Date().getFullYear();if(a<100)a+=2000;let f=ymd(new Date(a,+m[2]-1,+m[1]));if(!m[3]&&f<hoy())f=ymd(new Date(a+1,+m[2]-1,+m[1]));fecha=f});
   saca(R('\\bel (?:dia )?(\\d{1,2})\\b'),m=>{const d=new Date();let f=new Date(d.getFullYear(),d.getMonth(),+m[1]);if(ymd(f)<hoy())f=new Date(d.getFullYear(),d.getMonth()+1,+m[1]);fecha=ymd(f)});
   saca(R('\\b(\\d+(?:[.,]\\d+)?)\\s*(pastillas?|comprimidos?|capsulas?|gotas|ml|mg|sobres?|inhalacion(?:es)?|puffs?|unidades|cucharadas?)\\b'),m=>{r.dosis=m[0].trim();if(!/mg|ml/i.test(m[2]))r.uds=parseFloat(m[1].replace(',','.'))});
+  saca(R('\\b(?:en el|en la|en)\\s+((?:centro de salud|hospital|clinica|consulta|ambulatorio|oficina|banco|notaria|ayuntamiento|colegio|farmacia|gestoria|mutua|laboratorio)(?:\\s+(?!y\\b|que\\b|para\\b|con\\b|porque\\b|hay\\b|tengo\\b|llevar\\b|sin\\b|antes\\b)[^\\s,.;]+){0,4})'),m=>{r.lugar=cap(m[1].trim())});
   if(fecha)r.inicio=fecha;
   if(r.tipo==='cumple'&&r.rep==='una')r.rep='anual';
   if(r.tipo==='med'&&r.rep==='una'&&!fecha)r.rep='diaria';
@@ -311,8 +316,10 @@ function interpretar(txt){
   let w=t.replace(/[\s,;.]+/g,' ').trim().split(' ');
   while(w.length&&STOP.has(sinTildes(w[0])))w.shift();
   while(w.length&&STOP.has(sinTildes(w[w.length-1])))w.pop();
+  // Dictado largo: título corto y todo lo dicho a las notas para no perder explicaciones.
+  if(w.length>7){w=w.join(' ').split(R('[.;,]|\\s(?:porque|para que|que hay que|hay que|tengo que llevar|llevar|antes de|despues de|sin|y luego|ademas|me dijo|me dijeron|recordar que|y que|que)\\s','i'))[0].trim().split(' ').slice(0,7);
+    while(w.length>1&&STOP.has(sinTildes(w[w.length-1])))w.pop();r.notas=txt.trim()}
   let tit=w.join(' ');
-  if(r.tipo==='med'&&/\btomar/i.test(txt)&&!/^tomar/i.test(tit))tit=tit;
   r.titulo=cap(tit||txt.trim());
   r.avisos=[...TIPOS[r.tipo].avisos];
   return r}
@@ -559,9 +566,22 @@ async function borrarTodo(){const r=await pedirTexto('¿Borrar todo?','Se borrar
 
 /* ===== Voz ===== */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-function dictar(btn){const rec=new SR();rec.lang='es-ES';rec.interimResults=true;rec.maxAlternatives=1;btn.classList.add('escuchando');
-  rec.onresult=e=>{const txt=[...e.results].map(r=>r[0].transcript).join('');$('#inRapido').value=txt;if(e.results[e.results.length-1].isFinal){rec.stop();abrirForm(interpretar(txt))}};
-  rec.onerror=e=>{toast(e.error==='not-allowed'?'Permite el micrófono para dictar':'No te he entendido, prueba otra vez')};rec.onend=()=>btn.classList.remove('escuchando');rec.start()}
+// Dictado sin prisas: escucha hasta 4 s de silencio (o hasta pulsar otra vez) y se reengancha si el navegador corta.
+let dictado=null;
+function dictar(btn){
+  if(dictado){dictado.fin();return}
+  const st={finales:'',parcial:'',vivo:true,silencio:null,tope:null};
+  const pintar=()=>{$('#inRapido').value=(st.finales+' '+st.parcial).replace(/\s+/g,' ').trim()};
+  const reloj=()=>{clearTimeout(st.silencio);st.silencio=setTimeout(()=>st.fin(),4000)};
+  st.fin=()=>{if(!st.vivo)return;st.vivo=false;clearTimeout(st.silencio);clearTimeout(st.tope);try{st.rec.stop()}catch(_){}btn.classList.remove('escuchando');dictado=null;
+    const txt=(st.finales+' '+st.parcial).replace(/\s+/g,' ').trim();if(txt){$('#inRapido').value='';abrirForm(interpretar(txt))}else toast('No he oído nada')};
+  const empezar=()=>{const rec=new SR();st.rec=rec;rec.lang='es-ES';rec.continuous=true;rec.interimResults=true;
+    rec.onresult=e=>{let p='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];if(r.isFinal)st.finales+=' '+r[0].transcript;else p+=r[0].transcript}st.parcial=p;pintar();reloj()};
+    rec.onerror=e=>{if(e.error==='not-allowed'){toast('Permite el micrófono para dictar');st.vivo=false;btn.classList.remove('escuchando');dictado=null}};
+    rec.onend=()=>{if(st.vivo){st.finales+=' '+st.parcial;st.parcial='';try{empezar()}catch(_){st.fin()}}};
+    rec.start()};
+  dictado=st;btn.classList.add('escuchando');toast('Te escucho. Habla tranquilo; pulsa otra vez para terminar');
+  st.tope=setTimeout(()=>st.fin(),120000);st.silencio=setTimeout(()=>st.fin(),8000);empezar()}
 
 /* ===== Eventos ===== */
 document.addEventListener('click',e=>{
